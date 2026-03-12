@@ -78,6 +78,10 @@ jobs:
           # Copy z3-solver build files
           cp -r examples/web-demo/node_modules/z3-solver/build/* _site/z3-solver/build/
 
+          # Fix absolute paths for GitHub Pages subpath deployment
+          sed -i 's|src="/z3-solver/build/z3-built.js"|src="z3-solver/build/z3-built.js"|' _site/index.html
+          sed -i "s|import('/regorusjs.js')|import('./regorusjs.js')|" _site/app.js
+
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3
         with:
