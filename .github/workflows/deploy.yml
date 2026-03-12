@@ -1,0 +1,95 @@
+name: Build & Deploy Policy Analysis Playground
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout regorus z3-redux branch
+        uses: actions/checkout@v4
+        with:
+          repository: anakrish/regorus
+          ref: z3-redux
+
+      - name: Get source commit SHA
+        id: check
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Restore cached WASM build
+        uses: actions/cache@v4
+        id: wasm-cache
+        with:
+          path: bindings/wasm/pkg
+          key: wasm-pkg-${{ steps.check.outputs.sha }}
+
+      - name: Install Rust toolchain
+        if: steps.wasm-cache.outputs.cache-hit != 'true'
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Cache cargo registry & build
+        if: steps.wasm-cache.outputs.cache-hit != 'true'
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: bindings/wasm
+
+      - name: Install wasm-pack
+        if: steps.wasm-cache.outputs.cache-hit != 'true'
+        run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+
+      - name: Build WASM package
+        if: steps.wasm-cache.outputs.cache-hit != 'true'
+        working-directory: bindings/wasm
+        run: wasm-pack build --target web --release -- --features policy-analysis
+
+      - name: Install npm dependencies
+        working-directory: examples/web-demo
+        run: npm ci
+
+      - name: Assemble site
+        run: |
+          mkdir -p _site/z3-solver/build
+          # Copy web-demo files
+          cp examples/web-demo/index.html       _site/
+          cp examples/web-demo/app.js            _site/
+          cp examples/web-demo/styles.css        _site/
+          cp examples/web-demo/demos.js          _site/
+          cp examples/web-demo/highlighting.js   _site/
+          cp examples/web-demo/z3-solver-bridge.mjs _site/
+          cp examples/web-demo/coi-serviceworker.js _site/
+          cp -r examples/web-demo/policies       _site/policies
+          # Copy WASM pkg (regorusjs.js + regorusjs_bg.wasm)
+          cp bindings/wasm/pkg/regorusjs.js      _site/
+          cp bindings/wasm/pkg/regorusjs_bg.wasm _site/
+          # Copy z3-solver build files
+          cp -r examples/web-demo/node_modules/z3-solver/build/* _site/z3-solver/build/
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
